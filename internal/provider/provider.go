@@ -2,10 +2,10 @@
 
 // Package provider implements the postgres OpenTofu/Terraform provider — native
 // management of a PostgreSQL host's installed state, config files, service, and
-// HA topology over an SSH/CLI transport. It deliberately does NOT manage logical
-// objects (databases, roles, grants): compose those from cyrilgdn/postgresql at
-// the consumer layer. This provider owns install → config → service → HA; the
-// logical layer connects over the wire the config here opens.
+// HA topology over an SSH/CLI transport, plus the logical objects it hosts
+// (databases, roles, grants) driven through psql as the postgres superuser over
+// the same transport. Logical-object management is natively owned here — no
+// dependency on the community cyrilgdn/postgresql provider.
 package provider
 
 import (
@@ -51,8 +51,8 @@ func (p *postgresProvider) Metadata(_ context.Context, _ provider.MetadataReques
 func (p *postgresProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Native provider for a PostgreSQL host's installed state, config files, service, and " +
-			"HA topology, driven over SSH/CLI (PostgreSQL exposes no management REST API). Logical DB/role/grant " +
-			"CRUD is out of scope — compose those from `cyrilgdn/postgresql` at the consumer layer.",
+			"HA topology, driven over SSH/CLI (PostgreSQL exposes no management REST API). Logical objects " +
+			"(databases, roles, grants) are natively owned too — no external provider dependency.",
 		Attributes: map[string]schema.Attribute{
 			"ssh_host": schema.StringAttribute{
 				Required: true,
@@ -117,6 +117,9 @@ func (p *postgresProvider) Resources(_ context.Context) []func() resource.Resour
 		NewServiceResource,
 		NewClusterResource,
 		NewClusterNodeResource,
+		NewDatabaseResource,
+		NewRoleResource,
+		NewGrantResource,
 	}
 }
 

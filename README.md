@@ -2,18 +2,18 @@
 # terraform-provider-postgres
 
 A native OpenTofu/Terraform provider that manages a **PostgreSQL host** — its
-installed package, config files, service, and HA topology — over an SSH/CLI
-transport. PostgreSQL exposes no management REST API, so every resource drives
-the host's CLI (apt, `pg_ctlcluster`, `systemctl`, `pg_basebackup`, `repmgr`,
-`patroni`) over SSH with key/cert auth.
+installed package, config files, service, and HA topology — and the **logical
+objects** it hosts (databases, roles, grants), all over an SSH/CLI transport.
+PostgreSQL exposes no management REST API, so every resource drives the host's
+CLI (apt, `pg_ctlcluster`, `systemctl`, `pg_basebackup`, `repmgr`, `patroni`)
+and `psql` run as the postgres superuser, over SSH with key/cert auth.
 
-**Scope boundary — logical objects are composed, not owned here.** This provider
-owns **install → config → service → HA**. Logical DB/role/grant/schema CRUD is
-**out of scope**: compose those from
-[`cyrilgdn/postgresql`](https://registry.terraform.io/providers/cyrilgdn/postgresql)
-at the consumer layer (the `tofu/` repo), connecting over the wire the config
-here opens. The two providers are complementary: this one makes PostgreSQL
-*exist and listen*; `cyrilgdn/postgresql` fills it with databases and roles.
+**Native ownership — no external provider dependency.** This provider owns the
+full stack: **install → config → service → HA → databases/roles/grants**. Logical
+DB/role/grant CRUD is driven natively through `psql` (as the postgres superuser)
+over the same transport; the lab deliberately **does not** depend on the
+community `cyrilgdn/postgresql` provider. Identifiers are always double-quoted
+and every statement (including passwords) is fed to psql on stdin, never argv.
 
 ## Provider configuration
 
