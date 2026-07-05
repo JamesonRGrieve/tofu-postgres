@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Minimal golangci-lint config per the Go standard (ai-prompts/go.md §4):
+# the correctness/quality set beyond the defaults. Findings ratchet to zero.
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - gocritic
+    - revive
+    - errorlint
+    - bodyclose
+    - contextcheck
+    - noctx
+    - nilerr
+    - wrapcheck
+    - unconvert
+    - unparam
+    - misspell
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "domain": "tofu.postgres",
+  "title": "tofu-postgres — PostgreSQL host/config/service/HA provider",
+  "description": "Native OpenTofu/Terraform provider managing PostgreSQL installed state, config files, service, and HA (streaming/repmgr/patroni) over SSH/CLI. Logical DB/role/grant CRUD is out of scope — composed from cyrilgdn/postgresql at the consumer layer.",
+  "hierarchy": { "parent": null, "children": [] },
+  "phases": [
+    {
+      "number": 1,
+      "title": "Scaffold & transport",
+      "exit_criteria": "Compiles, gofmt/vet/test clean; framework-free transport with table-tested pure helpers.",
+      "items": [
+        { "number": "1.1", "feature": "Repo scaffold", "description": "go.mod/go.sum (mirrored, no dep changes), main.go, Makefile, .gitignore, .githooks/pre-commit, LICENSE, SPDX headers.", "done": true },
+        { "number": "1.2", "feature": "SSH transport", "description": "internal/postgres/ssh.go — os/exec ssh, key/cert only, temp-file key_pem, transient retry.", "done": true },
+        { "number": "1.3", "feature": "Client + injected-exec seam", "description": "Client{SSH}, RunFunc, Command, RunCommands — the hermetic test seam.", "done": true },
+        { "number": "1.4", "feature": "Pure helpers", "description": "conf.d + pg_hba rendering/parsing, dpkg/pg_lsclusters parse, primary_conninfo, patroni.yml + repmgr.conf render, mode dispatch — all table-tested.", "done": true }
+      ]
+    },
+    {
+      "number": 2,
+      "title": "Typed resources",
+      "exit_criteria": "Each resource: schema, CRUD, ImportState-to-0-diff, injected-exec unit tests.",
+      "items": [
+        { "number": "2.1", "feature": "postgres_package", "description": "apt install postgresql-<major> + hold; dpkg read-back.", "done": true },
+        { "number": "2.2", "feature": "postgres_config", "description": "postgresql.conf keys via conf.d drop-in + pg_hba block; manage-declared-only; reload/restart dispatch.", "done": true },
+        { "number": "2.3", "feature": "postgres_service", "description": "per-cluster systemd unit enabled/state/restart_triggers.", "done": true },
+        { "number": "2.4", "feature": "postgres_cluster", "description": "declarative HA topology record + validation (patroni requires dcs_reference).", "done": true },
+        { "number": "2.5", "feature": "postgres_cluster_node", "description": "per-node HA bring-up dispatched on ha_mode; schema + skeleton CRUD + mode-dispatch tests.", "done": true }
+      ]
+    },
+    {
+      "number": 3,
+      "title": "HA mode logic",
+      "exit_criteria": "All three modes render config + command sequences, unit-tested on pure logic.",
+      "items": [
+        { "number": "3.1a", "feature": "streaming", "description": "primary wal_level/senders/slots; standby primary_conninfo + standby.signal + pg_basebackup bootstrap.", "done": true },
+        { "number": "3.1b", "feature": "repmgr", "description": "repmgr.conf, primary register / standby clone / repmgrd.", "done": true },
+        { "number": "3.1c", "feature": "patroni", "description": "patroni.yml + DCS bootstrap; service enable.", "done": true }
+      ]
+    },
+    {
+      "number": 4,
+      "title": "Docs & examples",
+      "exit_criteria": "examples/ per resource + all HA modes; README, DESIGN, CLAUDE, .golangci.yml.",
+      "items": [
+        { "number": "4.1", "feature": "examples", "description": "provider + one runnable HCL per resource, all three HA modes.", "done": true },
+        { "number": "4.2", "feature": "docs", "description": "README (usage/resources/import/compose note), DESIGN (architecture + 3 HA modes + risk + verification-owed), CLAUDE, .golangci.yml.", "done": true }
+      ]
+    },
+    {
+      "number": 5,
+      "title": "Live verification (owed)",
+      "exit_criteria": "Each resource + each HA mode proven end-to-end at 0-diff on a lab twin via the sanctioned pipeline, before any production use.",
+      "items": [
+        { "number": "5.1", "feature": "Single-node install/config/service", "description": "import-to-0-diff on a lab PG host through prod-netbox → prod-semaphore.", "done": false },
+        { "number": "5.2", "feature": "streaming bring-up", "description": "primary+standby streaming replication proven on lab twins; base-backup run detached.", "done": false },
+        { "number": "5.3", "feature": "repmgr bring-up", "description": "repmgr register/clone/failover proven on lab twins.", "done": false },
+        { "number": "5.4", "feature": "patroni bring-up", "description": "patroni + DCS leadership proven on lab twins.", "done": false }
+      ]
+    }
+  ]
+}
