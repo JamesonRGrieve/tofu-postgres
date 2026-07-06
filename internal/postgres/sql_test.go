@@ -61,9 +61,9 @@ func TestCreateDatabaseSQL(t *testing.T) {
 			want: `CREATE DATABASE "app"`,
 		},
 		{
-			name: "owner and encoding",
+			name: "encoding forces template0",
 			spec: DatabaseSpec{Name: "app", Owner: "app_owner", Encoding: "UTF8"},
-			want: `CREATE DATABASE "app" OWNER "app_owner" ENCODING 'UTF8'`,
+			want: `CREATE DATABASE "app" OWNER "app_owner" ENCODING 'UTF8' TEMPLATE "template0"`,
 		},
 		{
 			name: "locale forces template0",

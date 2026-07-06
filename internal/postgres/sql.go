@@ -64,14 +64,15 @@ type DatabaseSpec struct {
 	Template  string
 }
 
-// effectiveTemplate resolves the template: an explicit value wins; otherwise a
-// locale override (LC_COLLATE/LC_CTYPE) forces template0 (template1 rejects a
-// differing locale), and a plain database uses the server default (no clause).
+// effectiveTemplate resolves the template: an explicit value wins; otherwise any
+// encoding OR locale override (ENCODING/LC_COLLATE/LC_CTYPE) forces template0 —
+// template1 rejects a differing encoding/locale (e.g. a UTF8 database on a
+// SQL_ASCII/C cluster) — and a plain database uses the server default (no clause).
 func (s DatabaseSpec) effectiveTemplate() string {
 	if s.Template != "" {
 		return s.Template
 	}
-	if s.LCCollate != "" || s.LCCtype != "" {
+	if s.Encoding != "" || s.LCCollate != "" || s.LCCtype != "" {
 		return "template0"
 	}
 	return ""
