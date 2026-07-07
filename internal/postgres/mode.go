@@ -112,6 +112,7 @@ func streamingNodeCommands(s NodeSpec) ([]Command, error) {
 		}
 		return StreamingPrimaryCommands(StreamingPrimaryParams{
 			Version: s.Version, Cluster: s.Cluster, Slots: slots,
+			ReplicationUser: s.ReplicationUser, ReplicationPassword: s.ReplicationPassword,
 		}), nil
 	case RoleReplica:
 		conninfo := BuildPrimaryConninfo(Conninfo{

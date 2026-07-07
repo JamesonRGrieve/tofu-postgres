@@ -102,7 +102,13 @@ dispatches its bring-up on the same mode via `postgres.NodeCommands`.
 
 - **Primary:** an HA drop-in sets `wal_level=replica`, `max_wal_senders`,
   `max_replication_slots`, `hot_standby=on`; a physical replication slot is
-  created idempotently per standby.
+  created idempotently per standby; and — when a `replication_user` is set — the
+  `LOGIN REPLICATION` role the standbys authenticate as is created-or-synced over
+  the local socket (peer auth, no superuser password; password fed on stdin so it
+  never hits argv). This role is HA plumbing the mode cannot work without (the
+  standby's `pg_basebackup` connects as it), in the same category as the physical
+  slots — not a user-facing logical role (those stay at the consumer/`cyrilgdn`
+  layer).
 - **Standby:** the local cluster is stopped, `pg_basebackup -R -X stream
   --slot=<slot>` clones from the primary (writing `primary_conninfo` +
   `standby.signal`), then it is started. The clone is guarded on an empty

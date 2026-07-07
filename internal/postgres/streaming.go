@@ -16,11 +16,13 @@ func HADropInPath(version, cluster string) string {
 // StreamingPrimaryParams configures the primary side of plain streaming
 // replication.
 type StreamingPrimaryParams struct {
-	Version       string
-	Cluster       string
-	MaxWalSenders int      // 0 → PostgreSQL default (10)
-	WalKeepSize   string   // e.g. "512MB"; empty → omit
-	Slots         []string // physical replication slots to create
+	Version             string
+	Cluster             string
+	MaxWalSenders       int      // 0 → PostgreSQL default (10)
+	WalKeepSize         string   // e.g. "512MB"; empty → omit
+	Slots               []string // physical replication slots to create
+	ReplicationUser     string   // the LOGIN REPLICATION role standbys connect as; empty → skip
+	ReplicationPassword string   // its password (synced on every apply); empty → no password
 }
 
 // StreamingPrimaryCommands renders the primary bring-up: write the HA drop-in
@@ -50,6 +52,18 @@ func StreamingPrimaryCommands(p StreamingPrimaryParams) []Command {
 		Label: "streaming primary reload",
 		Cmd:   fmt.Sprintf("pg_ctlcluster %s %s reload", p.Version, p.Cluster),
 	}}
+	// The standby's pg_basebackup connects as the replication role, so the primary
+	// must own that role. Create-or-sync it idempotently over the local socket
+	// (peer auth — no superuser password needed). This is HA plumbing (like the
+	// physical slots below), not a user-facing logical role. The password travels
+	// on stdin, never argv, so it never lands in the primary's process list.
+	if strings.TrimSpace(p.ReplicationUser) != "" {
+		cmds = append(cmds, Command{
+			Label: "streaming primary replication role",
+			Cmd:   fmt.Sprintf("su postgres -c %s", shQuote(primaryPsql(p.Version, p.Cluster, "-f -"))),
+			Stdin: []byte(replicationRoleSQL(p.ReplicationUser, p.ReplicationPassword)),
+		})
+	}
 	for _, slot := range p.Slots {
 		// Idempotent slot create: skip when the slot already exists.
 		sql := fmt.Sprintf(
@@ -57,10 +71,35 @@ func StreamingPrimaryCommands(p StreamingPrimaryParams) []Command {
 				"(SELECT 1 FROM pg_replication_slots WHERE slot_name = '%s');", slot, slot)
 		cmds = append(cmds, Command{
 			Label: "streaming create slot " + slot,
-			Cmd:   fmt.Sprintf("su postgres -c %s", shQuote(fmt.Sprintf("psql -p $(pg_lsclusters -h | awk '$1==\"%s\"&&$2==\"%s\"{print $3}') -tAc %s", p.Version, p.Cluster, shQuoteSQL(sql)))),
+			Cmd:   fmt.Sprintf("su postgres -c %s", shQuote(primaryPsql(p.Version, p.Cluster, "-tAc "+shQuoteSQL(sql)))),
 		})
 	}
 	return cmds
+}
+
+// primaryPsql builds a `psql` invocation whose -p port is resolved at runtime
+// from pg_lsclusters for the given version/cluster (the local cluster's port is
+// not knowable at plan time). args are appended verbatim (already quoted).
+func primaryPsql(version, cluster, args string) string {
+	return fmt.Sprintf("psql -p $(pg_lsclusters -h | awk '$1==\"%s\"&&$2==\"%s\"{print $3}') %s", version, cluster, args)
+}
+
+// replicationRoleSQL renders idempotent create-or-sync DDL for the streaming
+// replication role: CREATE it with LOGIN REPLICATION when absent, otherwise
+// ALTER it so a rotated password propagates. The identifier and password are
+// escaped for SQL (double-quoted ident, single-quoted literal); the SQL is fed
+// on stdin so the password never appears in a process argument.
+func replicationRoleSQL(user, password string) string {
+	ident := `"` + strings.ReplaceAll(user, `"`, `""`) + `"`
+	var pw string
+	if password != "" {
+		pw = " PASSWORD '" + strings.ReplaceAll(password, "'", "''") + "'"
+	}
+	return fmt.Sprintf(
+		"DO $do$ BEGIN "+
+			"IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = %s) THEN CREATE ROLE %s WITH LOGIN REPLICATION%s; "+
+			"ELSE ALTER ROLE %s WITH LOGIN REPLICATION%s; END IF; END $do$;",
+		"'"+strings.ReplaceAll(user, "'", "''")+"'", ident, pw, ident, pw)
 }
 
 // StreamingStandbyParams configures the standby side of plain streaming

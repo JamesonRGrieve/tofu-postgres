@@ -30,6 +30,35 @@ func TestStreamingPrimaryCommands(t *testing.T) {
 	if !strings.Contains(joined, "reload") || !strings.Contains(joined, "create slot standby1") {
 		t.Fatalf("streaming primary labels = %s", joined)
 	}
+	// With no ReplicationUser, no role command is emitted.
+	if strings.Contains(joined, "replication role") {
+		t.Fatalf("unexpected replication role command without a user: %s", joined)
+	}
+}
+
+func TestStreamingPrimaryCreatesReplicationRole(t *testing.T) {
+	cmds := StreamingPrimaryCommands(StreamingPrimaryParams{
+		Version: "16", Cluster: "main", ReplicationUser: "replicator", ReplicationPassword: "p'w",
+	})
+	var roleCmd Command
+	for _, c := range cmds {
+		if strings.Contains(c.Label, "replication role") {
+			roleCmd = c
+		}
+	}
+	if roleCmd.Label == "" {
+		t.Fatal("no replication role command emitted for a primary with a ReplicationUser")
+	}
+	sql := string(roleCmd.Stdin)
+	for _, want := range []string{"CREATE ROLE \"replicator\"", "LOGIN REPLICATION", "ALTER ROLE", "PASSWORD 'p''w'"} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("replication role SQL missing %q:\n%s", want, sql)
+		}
+	}
+	// The password must travel on stdin, never in the command's argv.
+	if strings.Contains(roleCmd.Cmd, "p'w") || strings.Contains(roleCmd.Cmd, "PASSWORD") {
+		t.Fatalf("password leaked into argv: %s", roleCmd.Cmd)
+	}
 }
 
 func TestStreamingStandbyCommands(t *testing.T) {
