@@ -21,7 +21,9 @@ func TestStreamingPrimaryCommands(t *testing.T) {
 	})
 	// config write carries the rendered HA drop-in on stdin.
 	conf := string(cmds[0].Stdin)
-	for _, want := range []string{"wal_level = replica", "max_wal_senders = 5", "hot_standby = on"} {
+	// wal_keep_size must always be emitted (default floor) so pg_basebackup can't
+	// hit "requested WAL segment … already removed".
+	for _, want := range []string{"wal_level = replica", "max_wal_senders = 5", "hot_standby = on", "wal_keep_size = '512MB'"} {
 		if !strings.Contains(conf, want) {
 			t.Fatalf("HA drop-in missing %q:\n%s", want, conf)
 		}

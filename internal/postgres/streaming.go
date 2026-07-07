@@ -13,13 +13,18 @@ func HADropInPath(version, cluster string) string {
 	return ConfDropInDir(version, cluster) + "/95-tofu-ha.conf"
 }
 
+// DefaultWalKeepSize is the WAL floor a streaming primary retains when the caller
+// declares none — enough headroom for a base-backup + a briefly-lagging standby
+// on a small cluster, without a replication slot.
+const DefaultWalKeepSize = "512MB"
+
 // StreamingPrimaryParams configures the primary side of plain streaming
 // replication.
 type StreamingPrimaryParams struct {
 	Version             string
 	Cluster             string
 	MaxWalSenders       int      // 0 → PostgreSQL default (10)
-	WalKeepSize         string   // e.g. "512MB"; empty → omit
+	WalKeepSize         string   // e.g. "512MB"; empty → DefaultWalKeepSize
 	Slots               []string // physical replication slots to create
 	ReplicationUser     string   // the LOGIN REPLICATION role standbys connect as; empty → skip
 	ReplicationPassword string   // its password (synced on every apply); empty → no password
@@ -40,9 +45,16 @@ func StreamingPrimaryCommands(p StreamingPrimaryParams) []Command {
 	fmt.Fprintf(&b, "max_wal_senders = %d\n", senders)
 	fmt.Fprintf(&b, "max_replication_slots = %d\n", senders)
 	b.WriteString("hot_standby = on\n")
-	if strings.TrimSpace(p.WalKeepSize) != "" {
-		fmt.Fprintf(&b, "wal_keep_size = '%s'\n", p.WalKeepSize)
+	// Always retain a WAL floor. With wal_keep_size=0 (the PostgreSQL default) the
+	// primary can recycle a segment the standby still needs — during the initial
+	// pg_basebackup (→ "requested WAL segment … has already been removed") or while
+	// a lagging standby catches up. A non-zero floor makes streaming bring-up work
+	// without a replication slot; a slot (finer-grained retention) is a future knob.
+	walKeep := strings.TrimSpace(p.WalKeepSize)
+	if walKeep == "" {
+		walKeep = DefaultWalKeepSize
 	}
+	fmt.Fprintf(&b, "wal_keep_size = '%s'\n", walKeep)
 
 	cmds := []Command{{
 		Label: "streaming primary ha config",
