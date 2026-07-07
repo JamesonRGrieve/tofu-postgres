@@ -165,8 +165,8 @@ func TestRepmgrPrimaryCommands(t *testing.T) {
 	// `repmgr primary register` self-connects over TCP, so the primary needs a
 	// .pgpass with its own credential (on stdin, never argv).
 	pgpass := find(cmds, "primary pgpass")
-	if !strings.Contains(string(pgpass.Stdin), "10.0.0.21:5432:repmgr:repmgr:s'ecret") {
-		t.Fatalf("primary pgpass missing self repmgr-db entry:\n%s", string(pgpass.Stdin))
+	if !strings.Contains(string(pgpass.Stdin), "*:*:*:repmgr:s'ecret") {
+		t.Fatalf("primary pgpass missing wildcard repmgr entry:\n%s", string(pgpass.Stdin))
 	}
 	if strings.Contains(pgpass.Cmd, "ecret") {
 		t.Fatalf("password leaked into pgpass argv: %s", pgpass.Cmd)
@@ -219,12 +219,10 @@ func TestRepmgrStandbyCommands(t *testing.T) {
 	if strings.Contains(clone.Cmd, "PG_VERSION") {
 		t.Fatalf("clone still uses the broken PG_VERSION guard:\n%s", clone.Cmd)
 	}
-	// pgpass carries the repmgr credential on stdin (replication + db lines), never argv.
+	// pgpass carries the repmgr credential as a wildcard entry on stdin, never argv.
 	pgpass := find(cmds, "standby pgpass")
-	for _, want := range []string{"10.0.0.1:5432:replication:repmgr:pw", "10.0.0.1:5432:repmgr:repmgr:pw"} {
-		if !strings.Contains(string(pgpass.Stdin), want) {
-			t.Fatalf("pgpass missing %q:\n%s", want, string(pgpass.Stdin))
-		}
+	if !strings.Contains(string(pgpass.Stdin), "*:*:*:repmgr:pw") {
+		t.Fatalf("standby pgpass missing wildcard repmgr entry:\n%s", string(pgpass.Stdin))
 	}
 	if strings.Contains(pgpass.Cmd, "pw") {
 		t.Fatalf("password leaked into pgpass argv: %s", pgpass.Cmd)

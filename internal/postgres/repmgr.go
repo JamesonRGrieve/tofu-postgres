@@ -79,6 +79,16 @@ func RenderRepmgrConf(p RepmgrConfParams) string {
 	return b.String()
 }
 
+// repmgrPgpassLine renders a wildcard ~postgres/.pgpass line for the repmgr role.
+// repmgr connects as this role to MANY hosts — its own node (the register
+// self-check hits the routable TCP conninfo, not the socket), the primary (clone
+// + metadata), and, after a failover, whichever node becomes primary — all with
+// the same credential. A wildcard host/port/db entry covers every such connection
+// without enumerating addresses that change on failover.
+func repmgrPgpassLine(user, password string) string {
+	return "*:*:*:" + user + ":" + password
+}
+
 // writeRepmgrConfCommand writes repmgr.conf owned by postgres.
 func writeRepmgrConfCommand(role, confPath, conf string) Command {
 	return Command{
@@ -151,17 +161,14 @@ type RepmgrPrimaryParams struct {
 func RepmgrPrimaryCommands(p RepmgrPrimaryParams) []Command {
 	user := orDefault(p.ReplUser, "repmgr")
 	db := orDefault(p.ReplDB, "repmgr")
-	port := orInt(p.SelfPort, DefaultPGPort)
 	cmds := []Command{writeRepmgrConfCommand("primary", p.ConfPath, p.Conf)}
 	cmds = append(cmds, repmgrRoleDBCommands("primary", p.Version, p.Cluster, user, p.ReplPassword, db)...)
 	// `repmgr primary register` connects to THIS node through the repmgr.conf
 	// conninfo — which is a routable TCP host (repmgr requires a non-localhost
 	// conninfo), so it hits scram auth and needs the password from ~postgres/.pgpass
 	// (peer auth is only for the local socket, not the self-TCP connection).
-	if p.SelfHost != "" && p.ReplPassword != "" {
-		cmds = append(cmds, pgpassCommand("repmgr primary pgpass",
-			fmt.Sprintf("%s:%d:replication:%s:%s", p.SelfHost, port, user, p.ReplPassword),
-			fmt.Sprintf("%s:%d:%s:%s:%s", p.SelfHost, port, db, user, p.ReplPassword)))
+	if p.ReplPassword != "" {
+		cmds = append(cmds, pgpassCommand("repmgr primary pgpass", repmgrPgpassLine(user, p.ReplPassword)))
 	}
 	cmds = append(cmds, Command{
 		Label: "repmgr primary register",
@@ -210,10 +217,8 @@ func RepmgrStandbyCommands(p RepmgrStandbyParams) []Command {
 		writeRepmgrConfCommand("standby", p.ConfPath, p.Conf),
 		{Label: "repmgr standby stop", Cmd: fmt.Sprintf("pg_ctlcluster %s %s stop || true", p.Version, p.Cluster)},
 	}
-	if p.PrimaryHost != "" && p.ReplPassword != "" {
-		cmds = append(cmds, pgpassCommand("repmgr standby pgpass",
-			fmt.Sprintf("%s:%d:replication:%s:%s", p.PrimaryHost, port, user, p.ReplPassword),
-			fmt.Sprintf("%s:%d:%s:%s:%s", p.PrimaryHost, port, db, user, p.ReplPassword)))
+	if p.ReplPassword != "" {
+		cmds = append(cmds, pgpassCommand("repmgr standby pgpass", repmgrPgpassLine(user, p.ReplPassword)))
 	}
 	cmds = append(cmds,
 		Command{Label: "repmgr standby clone", Cmd: guarded},
@@ -235,10 +240,8 @@ func RepmgrWitnessCommands(p RepmgrStandbyParams) []Command {
 		p.PrimaryHost, port, user, db, p.ConfPath)
 	cmds := []Command{writeRepmgrConfCommand("witness", p.ConfPath, p.Conf)}
 	cmds = append(cmds, repmgrRoleDBCommands("witness", p.Version, p.Cluster, user, p.ReplPassword, db)...)
-	if p.PrimaryHost != "" && p.ReplPassword != "" {
-		cmds = append(cmds, pgpassCommand("repmgr witness pgpass",
-			fmt.Sprintf("%s:%d:replication:%s:%s", p.PrimaryHost, port, user, p.ReplPassword),
-			fmt.Sprintf("%s:%d:%s:%s:%s", p.PrimaryHost, port, db, user, p.ReplPassword)))
+	if p.ReplPassword != "" {
+		cmds = append(cmds, pgpassCommand("repmgr witness pgpass", repmgrPgpassLine(user, p.ReplPassword)))
 	}
 	cmds = append(cmds, Command{Label: "repmgr witness register", Cmd: fmt.Sprintf("su postgres -c %s", shQuote(register))})
 	return append(cmds, repmgrdEnableCommands(p.ConfPath)...)
