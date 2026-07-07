@@ -87,19 +87,22 @@ func RenderPatroniYAML(p PatroniParams) string {
 	return b.String()
 }
 
-// patroniDCSPackage maps a DCS backend to the Debian package that supplies its
-// Patroni client. Debian splits each backend into its own package
-// (patroni-etcd / patroni-consul); the base `patroni` package ships only the
-// consul + kubernetes implementations, so an etcd DCS needs patroni-etcd
-// explicitly — it is NOT pulled as a Recommends (proven on the lab: without it,
-// `patronictl` reports "Can not find suitable configuration of distributed
-// configuration store. Available implementations: consul, kubernetes").
+// patroniDCSPackage maps a DCS backend to the Debian python client package(s)
+// Patroni needs to talk to it. Debian's `patroni` package Depends on an
+// alternative (python3-etcd | python3-consul | python3-kazoo | …) that apt
+// happily satisfies with WHICHEVER is already available (consul/kubernetes on a
+// base image) — so an etcd DCS gets NO etcd client and Patroni reports "Can not
+// find suitable configuration of distributed configuration store. Available
+// implementations: consul, kubernetes" and refuses to start. Install the etcd
+// clients explicitly: python3-etcd3 (v3 API — what the rendered `etcd3:` block
+// uses) plus python3-etcd (v2, harmless fallback). There is no `patroni-etcd`
+// package on Debian 13 — the backends are plain python modules.
 func patroniDCSPackage(dcs DCSType) string {
 	switch dcs {
 	case DCSConsul:
-		return "patroni-consul"
+		return "python3-consul"
 	default: // etcd3 (default) / etcd
-		return "patroni-etcd"
+		return "python3-etcd3 python3-etcd"
 	}
 }
 

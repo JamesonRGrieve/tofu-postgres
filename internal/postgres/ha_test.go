@@ -267,7 +267,7 @@ func TestPatroniCommands(t *testing.T) {
 	if !strings.Contains(install, "DPkg::Lock::Timeout=300") {
 		t.Fatalf("patroni install not lock-wait: %s", install)
 	}
-	if !strings.Contains(install, "patroni-etcd") {
+	if !strings.Contains(install, "python3-etcd3") {
 		t.Fatalf("patroni install missing etcd DCS client package: %s", install)
 	}
 	// The drop-in resets ExecStart to run our per-cluster config path.
