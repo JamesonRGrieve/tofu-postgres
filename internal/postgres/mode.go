@@ -147,6 +147,7 @@ func repmgrNodeCommands(s NodeSpec) ([]Command, error) {
 	case RolePrimary:
 		return append(preamble, RepmgrPrimaryCommands(RepmgrPrimaryParams{
 			Version: s.Version, Cluster: s.Cluster, ConfPath: confPath, Conf: conf,
+			SelfHost: s.Host, SelfPort: s.Port,
 			ReplUser: user, ReplPassword: s.ReplicationPassword,
 		})...), nil
 	case RoleReplica:

@@ -154,13 +154,22 @@ func TestRepmgrInstallCommand(t *testing.T) {
 func TestRepmgrPrimaryCommands(t *testing.T) {
 	cmds := RepmgrPrimaryCommands(RepmgrPrimaryParams{
 		Version: "17", Cluster: "main", ConfPath: "/etc/postgresql/17/main/repmgr.conf",
-		Conf: "conf-body", ReplUser: "repmgr", ReplPassword: "s'ecret",
+		Conf: "conf-body", SelfHost: "10.0.0.21", SelfPort: 5432, ReplUser: "repmgr", ReplPassword: "s'ecret",
 	})
 	joined := strings.Join(labels(cmds), ",")
-	for _, want := range []string{"repmgr primary conf", "repmgr primary role", "repmgr primary database", "repmgr primary register", "repmgrd defaults", "repmgr daemon"} {
+	for _, want := range []string{"repmgr primary conf", "repmgr primary role", "repmgr primary database", "repmgr primary pgpass", "repmgr primary register", "repmgrd defaults", "repmgr daemon"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("primary labels missing %q: %s", want, joined)
 		}
+	}
+	// `repmgr primary register` self-connects over TCP, so the primary needs a
+	// .pgpass with its own credential (on stdin, never argv).
+	pgpass := find(cmds, "primary pgpass")
+	if !strings.Contains(string(pgpass.Stdin), "10.0.0.21:5432:repmgr:repmgr:s'ecret") {
+		t.Fatalf("primary pgpass missing self repmgr-db entry:\n%s", string(pgpass.Stdin))
+	}
+	if strings.Contains(pgpass.Cmd, "ecret") {
+		t.Fatalf("password leaked into pgpass argv: %s", pgpass.Cmd)
 	}
 	// The repmgr role is created SUPERUSER, with the password on stdin (never argv).
 	role := find(cmds, "primary role")

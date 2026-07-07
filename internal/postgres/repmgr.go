@@ -138,19 +138,31 @@ type RepmgrPrimaryParams struct {
 	Cluster      string
 	ConfPath     string
 	Conf         string
+	SelfHost     string // this node's own routable address (repmgr.conf conninfo host)
+	SelfPort     int
 	ReplUser     string // repmgr superuser role (default "repmgr")
 	ReplPassword string
 	ReplDB       string // repmgr metadata db (default "repmgr")
 }
 
 // RepmgrPrimaryCommands renders: write repmgr.conf, create the repmgr
-// role+database on the local cluster, register this node as the repmgr primary,
-// then enable repmgrd (pointed at this conf).
+// role+database on the local cluster, drop a ~postgres/.pgpass, register this
+// node as the repmgr primary, then enable repmgrd (pointed at this conf).
 func RepmgrPrimaryCommands(p RepmgrPrimaryParams) []Command {
 	user := orDefault(p.ReplUser, "repmgr")
 	db := orDefault(p.ReplDB, "repmgr")
+	port := orInt(p.SelfPort, DefaultPGPort)
 	cmds := []Command{writeRepmgrConfCommand("primary", p.ConfPath, p.Conf)}
 	cmds = append(cmds, repmgrRoleDBCommands("primary", p.Version, p.Cluster, user, p.ReplPassword, db)...)
+	// `repmgr primary register` connects to THIS node through the repmgr.conf
+	// conninfo — which is a routable TCP host (repmgr requires a non-localhost
+	// conninfo), so it hits scram auth and needs the password from ~postgres/.pgpass
+	// (peer auth is only for the local socket, not the self-TCP connection).
+	if p.SelfHost != "" && p.ReplPassword != "" {
+		cmds = append(cmds, pgpassCommand("repmgr primary pgpass",
+			fmt.Sprintf("%s:%d:replication:%s:%s", p.SelfHost, port, user, p.ReplPassword),
+			fmt.Sprintf("%s:%d:%s:%s:%s", p.SelfHost, port, db, user, p.ReplPassword)))
+	}
 	cmds = append(cmds, Command{
 		Label: "repmgr primary register",
 		Cmd:   fmt.Sprintf("su postgres -c %s", shQuote(fmt.Sprintf("repmgr -f %s primary register --force", p.ConfPath))),
