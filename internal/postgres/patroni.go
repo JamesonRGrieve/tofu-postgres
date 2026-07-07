@@ -159,8 +159,12 @@ func patroniDropInCommands(confPath string) []Command {
 // wipes a running cluster.
 func patroniTakeoverCommand(version, cluster, dataDir string) Command {
 	unit := ServiceUnit(version, cluster)
-	body := fmt.Sprintf("pg_ctlcluster %s %s stop || true; systemctl disable %s 2>/dev/null || true; find %s -mindepth 1 -delete",
-		version, cluster, unit, shQuote(dataDir))
+	// `install -d` (re)creates the data_dir with the 0700 postgres ownership Patroni
+	// needs to initdb into — robust to a prior attempt having emptied or removed it
+	// (find on a missing dir would otherwise error and fail the takeover). Then
+	// empty it so Patroni bootstraps a fresh cluster.
+	body := fmt.Sprintf("pg_ctlcluster %s %s stop 2>/dev/null || true; systemctl disable %s 2>/dev/null || true; install -d -o postgres -g postgres -m 700 %s; find %s -mindepth 1 -delete",
+		version, cluster, unit, shQuote(dataDir), shQuote(dataDir))
 	return Command{
 		Label: "patroni takeover",
 		Cmd:   fmt.Sprintf("if [ ! -f %s/patroni.dynamic.json ]; then %s; fi", shQuote(dataDir), body),
