@@ -87,14 +87,28 @@ func RenderPatroniYAML(p PatroniParams) string {
 	return b.String()
 }
 
-// PatroniInstallCommand installs Patroni via the lock-wait apt prefix. Debian's
-// `patroni` package Recommends the DCS client libraries (python3-etcd3 for an
-// etcd DCS), and `apt-get install` pulls Recommends by default, so no separate
-// etcd-client package is required.
-func PatroniInstallCommand() Command {
+// patroniDCSPackage maps a DCS backend to the Debian package that supplies its
+// Patroni client. Debian splits each backend into its own package
+// (patroni-etcd / patroni-consul); the base `patroni` package ships only the
+// consul + kubernetes implementations, so an etcd DCS needs patroni-etcd
+// explicitly — it is NOT pulled as a Recommends (proven on the lab: without it,
+// `patronictl` reports "Can not find suitable configuration of distributed
+// configuration store. Available implementations: consul, kubernetes").
+func patroniDCSPackage(dcs DCSType) string {
+	switch dcs {
+	case DCSConsul:
+		return "patroni-consul"
+	default: // etcd3 (default) / etcd
+		return "patroni-etcd"
+	}
+}
+
+// PatroniInstallCommand installs Patroni + the client package for the chosen DCS
+// backend via the lock-wait apt prefix.
+func PatroniInstallCommand(dcs DCSType) Command {
 	return Command{
 		Label: "patroni install",
-		Cmd:   AptGet + " update -qq && " + AptGet + " install -y -qq patroni",
+		Cmd:   AptGet + " update -qq && " + AptGet + " install -y -qq patroni " + patroniDCSPackage(dcs),
 	}
 }
 
@@ -142,6 +156,7 @@ type PatroniNodeParams struct {
 	ClusterName string // Patroni scope (config filename)
 	DataDir     string
 	YAML        string
+	DCS         DCSType // selects the patroni-<dcs> client package to install
 }
 
 // PatroniCommands renders the full Patroni node bring-up: install Patroni, write
@@ -152,7 +167,7 @@ type PatroniNodeParams struct {
 func PatroniCommands(p PatroniNodeParams) []Command {
 	confPath := PatroniConfPath(p.ClusterName)
 	cmds := []Command{
-		PatroniInstallCommand(),
+		PatroniInstallCommand(p.DCS),
 		{Label: "patroni conf", Cmd: fmt.Sprintf("mkdir -p /etc/patroni && cat > %s", shQuote(confPath)), Stdin: []byte(p.YAML)},
 	}
 	cmds = append(cmds, patroniDropInCommands(confPath)...)

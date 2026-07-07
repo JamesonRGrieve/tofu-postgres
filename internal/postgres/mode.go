@@ -181,7 +181,7 @@ func patroniNodeCommands(s NodeSpec) ([]Command, error) {
 	})
 	return PatroniCommands(PatroniNodeParams{
 		Version: s.Version, Cluster: s.Cluster, ClusterName: s.ClusterName,
-		DataDir: DataDir(s.Version, s.Cluster), YAML: yaml,
+		DataDir: DataDir(s.Version, s.Cluster), YAML: yaml, DCS: s.DCS,
 	}), nil
 }
 

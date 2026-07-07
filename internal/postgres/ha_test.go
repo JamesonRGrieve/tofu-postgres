@@ -260,9 +260,15 @@ func TestPatroniCommands(t *testing.T) {
 			t.Fatalf("patroni labels missing %q: %s", want, joined)
 		}
 	}
-	// Install goes through the lock-wait apt prefix.
-	if !strings.Contains(find(cmds, "patroni install").Cmd, "DPkg::Lock::Timeout=300") {
-		t.Fatalf("patroni install not lock-wait: %s", find(cmds, "patroni install").Cmd)
+	// Install goes through the lock-wait apt prefix and pulls the etcd DCS client
+	// (Debian ships etcd support in the separate patroni-etcd package, not as a
+	// Recommends — without it patronictl can't find an etcd DCS implementation).
+	install := find(cmds, "patroni install").Cmd
+	if !strings.Contains(install, "DPkg::Lock::Timeout=300") {
+		t.Fatalf("patroni install not lock-wait: %s", install)
+	}
+	if !strings.Contains(install, "patroni-etcd") {
+		t.Fatalf("patroni install missing etcd DCS client package: %s", install)
 	}
 	// The drop-in resets ExecStart to run our per-cluster config path.
 	dropin := find(cmds, "patroni dropin")
