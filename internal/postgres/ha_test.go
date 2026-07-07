@@ -311,6 +311,7 @@ func TestRenderPatroniYAML(t *testing.T) {
 		PGListen: "0.0.0.0:5432", PGConnect: "10.0.0.20:5432",
 		DataDir: "/var/lib/postgresql/16/main", Synchronous: true,
 		ReplUser: "replicator", ReplPassword: "rp", SuperUser: "postgres", SuperPassword: "sp",
+		PgHbaCIDR: "10.0.0.0/24",
 	})
 	for _, want := range []string{
 		"scope: pgcluster",
@@ -321,6 +322,10 @@ func TestRenderPatroniYAML(t *testing.T) {
 		"data_dir: /var/lib/postgresql/16/main",
 		"connect_address: 10.0.0.20:5432",
 		"username: replicator",
+		// Patroni owns pg_hba — the replication entry over the node subnet must be
+		// present, else a replica's base-backup is rejected.
+		"pg_hba:",
+		"host replication replicator 10.0.0.0/24 scram-sha-256",
 	} {
 		if !strings.Contains(y, want) {
 			t.Fatalf("patroni.yml missing %q:\n%s", want, y)

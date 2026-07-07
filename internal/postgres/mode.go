@@ -77,6 +77,7 @@ type NodeSpec struct {
 	BinDir         string
 	SuperUser      string
 	SuperPassword  string
+	PgHbaCIDR      string // patroni: node subnet allowed in pg_hba for replication + access
 }
 
 // NodeCommands returns the ordered bring-up commands for a node, dispatched by
@@ -178,6 +179,7 @@ func patroniNodeCommands(s NodeSpec) ([]Command, error) {
 		Synchronous: s.Synchronous,
 		ReplUser:    s.ReplicationUser, ReplPassword: s.ReplicationPassword,
 		SuperUser: s.SuperUser, SuperPassword: s.SuperPassword,
+		PgHbaCIDR: s.PgHbaCIDR,
 	})
 	return PatroniCommands(PatroniNodeParams{
 		Version: s.Version, Cluster: s.Cluster, ClusterName: s.ClusterName,

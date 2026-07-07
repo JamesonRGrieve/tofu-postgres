@@ -39,6 +39,7 @@ type PatroniParams struct {
 	ReplPassword   string
 	SuperUser      string
 	SuperPassword  string
+	PgHbaCIDR      string // node subnet allowed for replication + access; empty → omit pg_hba
 }
 
 // RenderPatroniYAML hand-renders patroni.yml (no YAML dependency is added to
@@ -76,6 +77,18 @@ func RenderPatroniYAML(p PatroniParams) string {
 	fmt.Fprintf(&b, "  data_dir: %s\n", p.DataDir)
 	if strings.TrimSpace(p.BinDir) != "" {
 		fmt.Fprintf(&b, "  bin_dir: %s\n", p.BinDir)
+	}
+	// Patroni OWNS pg_hba.conf — it re-initdb's the leader and rewrites the file
+	// from postgresql.pg_hba, so a consumer's postgres_config pg_hba block is moot
+	// in patroni mode. Without entries here, a replica's pg_basebackup from the
+	// leader is rejected ("no pg_hba.conf entry for replication connection").
+	// Render (over the node subnet): local peer for patroni's own superuser socket
+	// access, a replication entry for the replication role, and general access.
+	if strings.TrimSpace(p.PgHbaCIDR) != "" {
+		b.WriteString("  pg_hba:\n")
+		b.WriteString("  - local all all peer\n")
+		fmt.Fprintf(&b, "  - host replication %s %s scram-sha-256\n", p.ReplUser, p.PgHbaCIDR)
+		fmt.Fprintf(&b, "  - host all all %s scram-sha-256\n", p.PgHbaCIDR)
 	}
 	b.WriteString("  authentication:\n")
 	b.WriteString("    replication:\n")
@@ -179,6 +192,11 @@ func PatroniCommands(p PatroniNodeParams) []Command {
 	cmds = append(cmds,
 		patroniTakeoverCommand(p.Version, p.Cluster, p.DataDir),
 		Command{Label: "patroni service", Cmd: "systemctl enable --now patroni"},
+		// Reload so an ALREADY-running node (re-apply / config change, e.g. an
+		// updated pg_hba) re-reads patroni.yml without a restart. On first bootstrap
+		// this is a harmless no-op — patroni just started with the same config.
+		Command{Label: "patroni reload", Cmd: fmt.Sprintf(
+			"patronictl -c %s reload %s --force 2>/dev/null || true", shQuote(confPath), shQuote(p.ClusterName))},
 	)
 	return cmds
 }

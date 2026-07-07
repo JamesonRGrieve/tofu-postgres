@@ -55,6 +55,7 @@ type clusterNodeModel struct {
 	PGConnect           types.String `tfsdk:"pg_connect"`
 	SuperUser           types.String `tfsdk:"super_user"`
 	SuperPassword       types.String `tfsdk:"super_password"`
+	PgHbaCIDR           types.String `tfsdk:"pg_hba_cidr"`
 }
 
 func (r *clusterNodeResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -155,6 +156,12 @@ func (r *clusterNodeResource) Schema(_ context.Context, _ resource.SchemaRequest
 				Sensitive:           true,
 				MarkdownDescription: "Superuser password for Patroni's authentication block (injected at apply).",
 			},
+			"pg_hba_cidr": schema.StringAttribute{
+				Optional: true,
+				MarkdownDescription: "Patroni mode: the node subnet (CIDR) allowed in the Patroni-managed pg_hba " +
+					"for replication + client access. Patroni owns pg_hba.conf, so a replica's base-backup " +
+					"needs the entry here (not via postgres_config).",
+			},
 		},
 	}
 }
@@ -187,6 +194,7 @@ func (m clusterNodeModel) nodeSpec() postgres.NodeSpec {
 		PGConnect:           m.PGConnect.ValueString(),
 		SuperUser:           m.SuperUser.ValueString(),
 		SuperPassword:       m.SuperPassword.ValueString(),
+		PgHbaCIDR:           m.PgHbaCIDR.ValueString(),
 	}
 }
 
