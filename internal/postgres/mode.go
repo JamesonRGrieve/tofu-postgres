@@ -122,6 +122,8 @@ func streamingNodeCommands(s NodeSpec) ([]Command, error) {
 		})
 		return StreamingStandbyCommands(StreamingStandbyParams{
 			Version: s.Version, Cluster: s.Cluster, Conninfo: conninfo, Slot: s.ReplicationSlot,
+			PrimaryHost: s.PrimaryHost, PrimaryPort: s.PrimaryPort,
+			ReplicationUser: s.ReplicationUser, ReplicationPassword: s.ReplicationPassword,
 		}), nil
 	default:
 		return nil, fmt.Errorf("streaming does not support role %q", s.Role)

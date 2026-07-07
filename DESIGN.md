@@ -109,10 +109,18 @@ dispatches its bring-up on the same mode via `postgres.NodeCommands`.
   standby's `pg_basebackup` connects as it), in the same category as the physical
   slots — not a user-facing logical role (those stay at the consumer/`cyrilgdn`
   layer).
-- **Standby:** the local cluster is stopped, `pg_basebackup -R -X stream
-  --slot=<slot>` clones from the primary (writing `primary_conninfo` +
-  `standby.signal`), then it is started. The clone is guarded on an empty
-  datadir (`PG_VERSION` absent) so a re-apply is a no-op.
+- **Standby:** the local cluster is stopped; a `~postgres/.pgpass` is written with
+  the replication credential (so the walreceiver authenticates even if
+  `pg_basebackup -R` omits the password from `primary_conninfo`); the datadir —
+  which the fresh package install already populated — is **emptied** and
+  `pg_basebackup -R -X stream --slot=<slot>` clones from the primary (writing
+  `primary_conninfo` + `standby.signal`); then it is started. The clone is guarded
+  on `primary_conninfo` already referencing the primary host in
+  `postgresql.auto.conf` — the only state that is true exclusively after a real
+  clone — so a re-apply is a no-op, a fresh node converges, and a previously
+  half-brought-up standby self-heals. (It must NOT guard on `PG_VERSION`: every
+  initialized datadir has it, so that guard skipped the clone on first apply and
+  left the node a disconnected standalone.)
 
 ### repmgr — managed streaming + automatic failover
 

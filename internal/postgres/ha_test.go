@@ -62,23 +62,41 @@ func TestStreamingPrimaryCreatesReplicationRole(t *testing.T) {
 }
 
 func TestStreamingStandbyCommands(t *testing.T) {
-	conninfo := BuildPrimaryConninfo(Conninfo{Host: "10.0.0.1", User: "repl", ApplicationName: "n2"})
+	conninfo := BuildPrimaryConninfo(Conninfo{Host: "10.0.0.1", User: "replicator", Password: "pw", ApplicationName: "n2"})
 	cmds := StreamingStandbyCommands(StreamingStandbyParams{
 		Version: "16", Cluster: "main", Conninfo: conninfo, Slot: "standby1",
+		PrimaryHost: "10.0.0.1", PrimaryPort: 5432, ReplicationUser: "replicator", ReplicationPassword: "pw",
 	})
-	var basebackup string
+	var clone, pgpass Command
 	for _, c := range cmds {
-		if strings.Contains(c.Label, "basebackup") {
-			basebackup = c.Cmd
+		if strings.Contains(c.Label, "clone") {
+			clone = c
+		}
+		if strings.Contains(c.Label, "pgpass") {
+			pgpass = c
 		}
 	}
-	if basebackup == "" {
-		t.Fatal("no basebackup command emitted")
+	if clone.Cmd == "" {
+		t.Fatal("no clone command emitted")
 	}
-	for _, want := range []string{"pg_basebackup", "-R", "--slot=", "standby1", "PG_VERSION"} {
-		if !strings.Contains(basebackup, want) {
-			t.Fatalf("basebackup command missing %q:\n%s", want, basebackup)
+	// The clone must guard on primary_conninfo referencing the primary host
+	// (idempotent + self-healing), empty the datadir (a fresh install populated
+	// it), and run pg_basebackup -R --slot; it must NOT use the old PG_VERSION
+	// guard that skipped the clone after a fresh install.
+	for _, want := range []string{"host=10.0.0.1", "postgresql.auto.conf", "-mindepth 1 -delete", "pg_basebackup", "-R", "--slot=", "standby1"} {
+		if !strings.Contains(clone.Cmd, want) {
+			t.Fatalf("clone command missing %q:\n%s", want, clone.Cmd)
 		}
+	}
+	if strings.Contains(clone.Cmd, "PG_VERSION") {
+		t.Fatalf("clone still uses the broken PG_VERSION guard:\n%s", clone.Cmd)
+	}
+	// The .pgpass carries the password on stdin, never argv.
+	if pgpass.Label == "" || !strings.Contains(string(pgpass.Stdin), "10.0.0.1:5432:replication:replicator:pw") {
+		t.Fatalf("pgpass not written with the replication credential on stdin: %q / %q", pgpass.Cmd, string(pgpass.Stdin))
+	}
+	if strings.Contains(pgpass.Cmd, "pw") {
+		t.Fatalf("password leaked into pgpass argv: %s", pgpass.Cmd)
 	}
 }
 

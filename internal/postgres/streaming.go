@@ -109,6 +109,13 @@ type StreamingStandbyParams struct {
 	Cluster  string
 	Conninfo string // primary_conninfo (from BuildPrimaryConninfo)
 	Slot     string // primary slot the standby consumes
+	// The primary reach + replication credential, used to write a ~postgres/.pgpass
+	// so the walreceiver authenticates even if pg_basebackup -R omits the password
+	// from primary_conninfo. Empty PrimaryHost/User → no .pgpass is written.
+	PrimaryHost         string
+	PrimaryPort         int
+	ReplicationUser     string
+	ReplicationPassword string
 }
 
 // StreamingStandbyCommands renders the standby bootstrap: stop the local
@@ -122,14 +129,46 @@ func StreamingStandbyCommands(p StreamingStandbyParams) []Command {
 	if p.Slot != "" {
 		baseBackup += " --slot=" + shQuote(p.Slot)
 	}
-	// Guard: only clone when the datadir has no cluster yet.
-	guarded := fmt.Sprintf("[ -f %s/PG_VERSION ] || su postgres -c %s", shQuote(dataDir), shQuote(baseBackup))
-	return []Command{
+	// The fresh package install already initialized a standalone cluster in the
+	// datadir, and pg_basebackup requires an EMPTY target — so on a node that is
+	// not already a standby OF THIS PRIMARY, wipe the local cluster and clone from
+	// the primary. pg_basebackup -R writes primary_conninfo + standby.signal. The
+	// idempotency guard keys on primary_conninfo referencing the primary host in
+	// postgresql.auto.conf — the only state that is true exclusively after a real
+	// clone. It deliberately does NOT key on PG_VERSION (every initialized datadir
+	// has it — that is what made the old guard skip the clone on first apply) nor
+	// on standby.signal alone (a half-brought-up standalone can carry a stale
+	// signal with an empty primary_conninfo); so this both converges a fresh node
+	// and self-heals a previously-botched standby, while a real re-apply is a no-op.
+	clone := fmt.Sprintf(
+		"if ! grep -qs %s %s/postgresql.auto.conf; then find %s -mindepth 1 -delete && su postgres -c %s; fi",
+		shQuote("host="+p.PrimaryHost), shQuote(dataDir), shQuote(dataDir), shQuote(baseBackup))
+	cmds := []Command{
 		{Label: "streaming standby stop", Cmd: fmt.Sprintf("pg_ctlcluster %s %s stop || true", p.Version, p.Cluster)},
-		{Label: "streaming standby basebackup", Cmd: guarded},
-		{Label: "streaming standby signal", Cmd: fmt.Sprintf("touch %s/standby.signal && chown postgres:postgres %s/standby.signal", shQuote(dataDir), shQuote(dataDir))},
-		{Label: "streaming standby start", Cmd: fmt.Sprintf("pg_ctlcluster %s %s start", p.Version, p.Cluster)},
 	}
+	// A ~postgres/.pgpass guarantees the walreceiver can authenticate even when
+	// pg_basebackup -R leaves the password out of primary_conninfo. The secret is
+	// fed on stdin, never argv. Written before the clone so it is in place the
+	// moment the standby starts streaming.
+	if p.PrimaryHost != "" && p.ReplicationUser != "" && p.ReplicationPassword != "" {
+		port := p.PrimaryPort
+		if port == 0 {
+			port = DefaultPGPort
+		}
+		pgpass := fmt.Sprintf("%s:%d:replication:%s:%s\n%s:%d:*:%s:%s\n",
+			p.PrimaryHost, port, p.ReplicationUser, p.ReplicationPassword,
+			p.PrimaryHost, port, p.ReplicationUser, p.ReplicationPassword)
+		cmds = append(cmds, Command{
+			Label: "streaming standby pgpass",
+			Cmd:   "install -d -o postgres -g postgres -m 700 ~postgres && cat > ~postgres/.pgpass && chown postgres:postgres ~postgres/.pgpass && chmod 600 ~postgres/.pgpass",
+			Stdin: []byte(pgpass),
+		})
+	}
+	cmds = append(cmds,
+		Command{Label: "streaming standby clone", Cmd: clone},
+		Command{Label: "streaming standby start", Cmd: fmt.Sprintf("pg_ctlcluster %s %s start", p.Version, p.Cluster)},
+	)
+	return cmds
 }
 
 // shQuoteSQL double-quotes a SQL string for nesting inside an already
