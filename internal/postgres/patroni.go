@@ -116,14 +116,16 @@ func PatroniInstallCommand(dcs DCSType) Command {
 }
 
 // patroniDropInCommands makes the packaged patroni.service run OUR per-cluster
-// config. The Debian `patroni` unit's ExecStart hardcodes a config path
-// (historically /etc/patroni.yml, and it has varied across releases), so rather
-// than depend on that path we install a systemd drop-in that resets ExecStart
-// (an empty ExecStart= is required before a replacement) and points patroni at
-// PatroniConfPath, then daemon-reload. This is robust to whatever the packaged
-// unit ships with.
+// config. The Debian `patroni` unit both hardcodes an ExecStart config path AND
+// gates startup on `ConditionPathExists=/etc/patroni/config.yml` — so with our
+// config at a different path systemd SILENTLY SKIPS the service ("was skipped
+// because of an unmet condition check"), making `enable --now` report success
+// while patroni never runs. The drop-in therefore (1) clears the condition list
+// with an empty `ConditionPathExists=` in [Unit] and (2) resets ExecStart (an
+// empty ExecStart= is required before a replacement) to point patroni at
+// PatroniConfPath; then daemon-reload. Robust to whatever the packaged unit ships.
 func patroniDropInCommands(confPath string) []Command {
-	dropin := "[Service]\nExecStart=\nExecStart=/usr/bin/patroni " + confPath + "\n"
+	dropin := "[Unit]\nConditionPathExists=\n[Service]\nExecStart=\nExecStart=/usr/bin/patroni " + confPath + "\n"
 	return []Command{
 		{
 			Label: "patroni dropin",

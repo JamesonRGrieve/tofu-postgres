@@ -270,9 +270,10 @@ func TestPatroniCommands(t *testing.T) {
 	if !strings.Contains(install, "python3-etcd3") {
 		t.Fatalf("patroni install missing etcd DCS client package: %s", install)
 	}
-	// The drop-in resets ExecStart to run our per-cluster config path.
+	// The drop-in clears the packaged unit's ConditionPathExists gate (else systemd
+	// skips the service) and resets ExecStart to run our per-cluster config path.
 	dropin := find(cmds, "patroni dropin")
-	for _, want := range []string{"ExecStart=\n", "/usr/bin/patroni /etc/patroni/pgcluster.yml"} {
+	for _, want := range []string{"[Unit]\nConditionPathExists=\n", "ExecStart=\n", "/usr/bin/patroni /etc/patroni/pgcluster.yml"} {
 		if !strings.Contains(string(dropin.Stdin), want) {
 			t.Fatalf("patroni drop-in missing %q:\n%s", want, string(dropin.Stdin))
 		}
