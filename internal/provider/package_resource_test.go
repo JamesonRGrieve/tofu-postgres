@@ -41,8 +41,12 @@ func (r *recorder) joined() string { return strings.Join(r.cmds, "\n") }
 
 func TestPackageCommands(t *testing.T) {
 	held := packageCommands("16", true)
-	if !strings.Contains(held[0].Cmd, "apt-get install -y -qq postgresql-16") {
+	if !strings.Contains(held[0].Cmd, "install -y -qq postgresql-16") {
 		t.Fatalf("install cmd = %q", held[0].Cmd)
+	}
+	// a boot-time apt-daily can hold the dpkg lock; the install must wait for it.
+	if !strings.Contains(held[0].Cmd, "DPkg::Lock::Timeout=300") {
+		t.Fatalf("install missing lock-wait = %q", held[0].Cmd)
 	}
 	if !strings.Contains(held[1].Cmd, "apt-mark hold postgresql-16") {
 		t.Fatalf("hold cmd = %q", held[1].Cmd)
