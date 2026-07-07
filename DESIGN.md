@@ -124,21 +124,62 @@ dispatches its bring-up on the same mode via `postgres.NodeCommands`.
 
 ### repmgr — managed streaming + automatic failover
 
-- `repmgr.conf` is rendered per node (node_id, node_name, conninfo, data dir,
-  `failover='automatic'`, promote/follow commands).
-- **Primary:** `repmgr primary register`; **standby:** `repmgr standby clone`
-  (guarded), start, `repmgr standby register`; **witness:** `repmgr witness
-  register`. `repmgrd` is enabled for automatic failover.
+- **Package.** Every repmgr node's command list is prefixed with an install of
+  the versioned `postgresql-<major>-repmgr` package (repmgr CLI + repmgrd) via
+  the lock-wait apt prefix — nothing repmgr does works without it.
+- **`repmgr.conf`** is rendered per node (node_id, node_name, conninfo, data dir,
+  `pg_bindir` → `/usr/lib/postgresql/<major>/bin`, `failover='automatic'`). The
+  `promote_command`/`follow_command` reference the **real** conf path
+  (`/etc/postgresql/<major>/<cluster>/repmgr.conf`), not a hardcoded
+  `/etc/repmgr.conf`, so repmgrd re-reads the same file.
+- **`repmgrd` service.** `/etc/default/repmgrd` is written with
+  `REPMGRD_ENABLED=yes` and `REPMGRD_CONF="<confPath>"` (the Debian repmgrd unit
+  refuses to start without the enable flag and otherwise loads a non-existent
+  `/etc/repmgr.conf`), then `systemctl enable --now repmgrd`.
+- **Primary:** write conf → create the repmgr role (`LOGIN SUPERUSER
+  REPLICATION`, create-or-ALTER idempotently, password on stdin) + the `repmgr`
+  metadata database (idempotent via psql `\gexec` guarded on `pg_database`) over
+  the local socket (peer auth) → `repmgr primary register --force` → enable
+  repmgrd. The primary keeps its populated datadir.
+- **Standby:** write conf → stop the local cluster → write a `~postgres/.pgpass`
+  with the repmgr credential (`…:replication:repmgr:pw` **and**
+  `…:repmgr:repmgr:pw`, on stdin) → **empty the datadir** (the fresh install
+  populated it) and `repmgr standby clone --force` → start → `repmgr standby
+  register --force` → enable repmgrd. The clone is guarded on `primary_conninfo`
+  already referencing the primary host in `postgresql.auto.conf` (true only
+  after a real clone) — **not** on `PG_VERSION` (every initialized datadir has
+  it, so the old guard skipped the clone forever on a fresh node) — so a fresh
+  node converges, a botched standby self-heals, and a re-apply is a no-op.
+- **Witness:** write conf → create the repmgr role+database on the witness's own
+  standalone postgres → `.pgpass` → `repmgr witness register --force` → enable
+  repmgrd (a witness holds no data replica but joins repmgrd's failover quorum).
 
 ### patroni — DCS-coordinated HA
 
-- `patroni.yml` is rendered (scope, name, restapi, the etcd/consul DCS block,
-  bootstrap dcs with `synchronous_mode`, postgresql connect/data/auth). No YAML
-  dependency is added; the file is hand-rendered.
+- **Package.** Each node installs `patroni` via the lock-wait apt prefix; apt
+  Recommends pulls the DCS client library (python3-etcd3 for an etcd DCS), so no
+  separate client package is installed.
+- **`patroni.yml`** is hand-rendered (scope, name, restapi, the etcd/consul DCS
+  block, bootstrap dcs with `synchronous_mode`, postgresql connect/data/auth,
+  and `bin_dir` → `/usr/lib/postgresql/<major>/bin`). No YAML dependency is
+  added. It is written to `/etc/patroni/<scope>.yml`.
+- **Service reconciliation.** The Debian `patroni` unit's `ExecStart` hardcodes a
+  config path that has varied across releases, so rather than depend on it a
+  systemd drop-in (`/etc/systemd/system/patroni.service.d/10-tofu.conf`) resets
+  `ExecStart` and points it at our config path, then `systemctl daemon-reload`.
+- **Empty-datadir bootstrap.** Patroni — not systemd — must own the postgres
+  process and must `initdb` into an **empty** data_dir, but the fresh install
+  already started a populated `main` cluster there. So before starting patroni
+  the packaged `postgresql@<major>-<cluster>` unit is stopped and disabled and
+  the data_dir is emptied — all guarded on the **absence** of
+  `<data_dir>/patroni.dynamic.json` (Patroni writes it once bootstrapped), so a
+  re-apply against a live Patroni node is a no-op and never wipes a running
+  cluster. Patroni then initdb+bootstraps into the empty dir via the DCS.
 - Each node runs the same config and coordinates leadership through the DCS;
   Patroni self-elects (role is advisory). `postgres_cluster.dcs_reference` is
   required in this mode. **Do not** also manage the same cluster with
-  `postgres_service` — Patroni owns the postgres process once running.
+  `postgres_service` — Patroni owns the postgres process once running (the
+  consumer already count-guards `postgres_service` off in patroni mode).
 
 ## Risk & verification owed
 

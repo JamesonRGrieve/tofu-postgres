@@ -49,3 +49,18 @@ func BuildPrimaryConninfo(c Conninfo) string {
 	}
 	return strings.Join(parts, " ")
 }
+
+// pgpassCommand builds the Command that writes a ~postgres/.pgpass from the
+// given lines (each already `host:port:database:user:password`). The secret
+// travels on stdin, never argv, so it never lands in the host's process list;
+// the file is created 0600 owned by postgres. Shared by the streaming standby
+// and every repmgr node so the walreceiver / repmgr clone / node-to-node auth
+// succeeds even when a conninfo omits the password.
+func pgpassCommand(label string, lines ...string) Command {
+	return Command{
+		Label: label,
+		Cmd: "install -d -o postgres -g postgres -m 700 ~postgres && cat > ~postgres/.pgpass && " +
+			"chown postgres:postgres ~postgres/.pgpass && chmod 600 ~postgres/.pgpass",
+		Stdin: []byte(strings.Join(lines, "\n") + "\n"),
+	}
+}

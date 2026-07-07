@@ -131,31 +131,36 @@ func streamingNodeCommands(s NodeSpec) ([]Command, error) {
 }
 
 func repmgrNodeCommands(s NodeSpec) ([]Command, error) {
+	user := orDefault(s.ReplicationUser, "repmgr")
+	confPath := RepmgrConfPath(s.Version, s.Cluster)
 	selfConninfo := BuildPrimaryConninfo(Conninfo{
-		Host: s.Host, Port: s.Port, User: orDefault(s.ReplicationUser, "repmgr"), DBName: "repmgr",
+		Host: s.Host, Port: s.Port, User: user, DBName: "repmgr",
 	})
 	conf := RenderRepmgrConf(RepmgrConfParams{
 		NodeID: s.NodeID, NodeName: s.NodeName, Conninfo: selfConninfo,
-		DataDir: DataDir(s.Version, s.Cluster), ReplicationUser: s.ReplicationUser,
+		DataDir: DataDir(s.Version, s.Cluster), ReplicationUser: user,
+		ConfPath: confPath, PGBinDir: PGBinDir(s.Version),
 	})
-	confPath := RepmgrConfPath(s.Version, s.Cluster)
+	// Every repmgr node needs the repmgr package before any repmgr/repmgrd call.
+	preamble := []Command{RepmgrInstallCommand(s.Version)}
 	switch s.Role {
 	case RolePrimary:
-		return RepmgrPrimaryCommands(confPath, conf), nil
-	case RoleReplica:
-		return RepmgrStandbyCommands(RepmgrStandbyParams{
+		return append(preamble, RepmgrPrimaryCommands(RepmgrPrimaryParams{
 			Version: s.Version, Cluster: s.Cluster, ConfPath: confPath, Conf: conf,
-			PrimaryHost: s.PrimaryHost, PrimaryPort: s.PrimaryPort, ReplUser: s.ReplicationUser,
-		}), nil
+			ReplUser: user, ReplPassword: s.ReplicationPassword,
+		})...), nil
+	case RoleReplica:
+		return append(preamble, RepmgrStandbyCommands(RepmgrStandbyParams{
+			Version: s.Version, Cluster: s.Cluster, ConfPath: confPath, Conf: conf,
+			PrimaryHost: s.PrimaryHost, PrimaryPort: s.PrimaryPort,
+			ReplUser: user, ReplPassword: s.ReplicationPassword,
+		})...), nil
 	case RoleWitness:
-		// A repmgr witness runs a standalone postgres and registers as a witness
-		// against the primary (it holds no data replica).
-		register := fmt.Sprintf("repmgr -h %s -p %d -f %s witness register --force",
-			s.PrimaryHost, orInt(s.PrimaryPort, DefaultPGPort), confPath)
-		return []Command{
-			{Label: "repmgr witness conf", Cmd: fmt.Sprintf("cat > %s && chown postgres:postgres %s", shQuote(confPath), shQuote(confPath)), Stdin: []byte(conf)},
-			{Label: "repmgr witness register", Cmd: fmt.Sprintf("su postgres -c %s", shQuote(register))},
-		}, nil
+		return append(preamble, RepmgrWitnessCommands(RepmgrStandbyParams{
+			Version: s.Version, Cluster: s.Cluster, ConfPath: confPath, Conf: conf,
+			PrimaryHost: s.PrimaryHost, PrimaryPort: s.PrimaryPort,
+			ReplUser: user, ReplPassword: s.ReplicationPassword,
+		})...), nil
 	default:
 		return nil, fmt.Errorf("repmgr does not support role %q", s.Role)
 	}
@@ -168,11 +173,15 @@ func patroniNodeCommands(s NodeSpec) ([]Command, error) {
 		Scope: s.ClusterName, NodeName: s.NodeName, DCS: s.DCS, DCSHosts: s.DCSReference,
 		RestAPIListen: orDefault(s.RestAPIListen, "0.0.0.0:8008"), RestAPIConnect: s.RestAPIConnect,
 		PGListen: orDefault(s.PGListen, "0.0.0.0:5432"), PGConnect: s.PGConnect,
-		DataDir: DataDir(s.Version, s.Cluster), BinDir: s.BinDir, Synchronous: s.Synchronous,
-		ReplUser: s.ReplicationUser, ReplPassword: s.ReplicationPassword,
+		DataDir: DataDir(s.Version, s.Cluster), BinDir: orDefault(s.BinDir, PGBinDir(s.Version)),
+		Synchronous: s.Synchronous,
+		ReplUser:    s.ReplicationUser, ReplPassword: s.ReplicationPassword,
 		SuperUser: s.SuperUser, SuperPassword: s.SuperPassword,
 	})
-	return PatroniCommands(s.ClusterName, yaml), nil
+	return PatroniCommands(PatroniNodeParams{
+		Version: s.Version, Cluster: s.Cluster, ClusterName: s.ClusterName,
+		DataDir: DataDir(s.Version, s.Cluster), YAML: yaml,
+	}), nil
 }
 
 func orDefault(v, def string) string {

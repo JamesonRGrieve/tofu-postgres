@@ -87,13 +87,78 @@ func RenderPatroniYAML(p PatroniParams) string {
 	return b.String()
 }
 
-// PatroniCommands renders: write patroni.yml, then enable+start the patroni
-// service. Patroni owns the postgres process once running — do NOT also manage
-// the same cluster via postgres_service (see DESIGN.md).
-func PatroniCommands(clusterName, yaml string) []Command {
-	confPath := PatroniConfPath(clusterName)
-	return []Command{
-		{Label: "patroni conf", Cmd: fmt.Sprintf("mkdir -p /etc/patroni && cat > %s", shQuote(confPath)), Stdin: []byte(yaml)},
-		{Label: "patroni service", Cmd: "systemctl enable --now patroni"},
+// PatroniInstallCommand installs Patroni via the lock-wait apt prefix. Debian's
+// `patroni` package Recommends the DCS client libraries (python3-etcd3 for an
+// etcd DCS), and `apt-get install` pulls Recommends by default, so no separate
+// etcd-client package is required.
+func PatroniInstallCommand() Command {
+	return Command{
+		Label: "patroni install",
+		Cmd:   AptGet + " update -qq && " + AptGet + " install -y -qq patroni",
 	}
+}
+
+// patroniDropInCommands makes the packaged patroni.service run OUR per-cluster
+// config. The Debian `patroni` unit's ExecStart hardcodes a config path
+// (historically /etc/patroni.yml, and it has varied across releases), so rather
+// than depend on that path we install a systemd drop-in that resets ExecStart
+// (an empty ExecStart= is required before a replacement) and points patroni at
+// PatroniConfPath, then daemon-reload. This is robust to whatever the packaged
+// unit ships with.
+func patroniDropInCommands(confPath string) []Command {
+	dropin := "[Service]\nExecStart=\nExecStart=/usr/bin/patroni " + confPath + "\n"
+	return []Command{
+		{
+			Label: "patroni dropin",
+			Cmd:   "mkdir -p /etc/systemd/system/patroni.service.d && cat > /etc/systemd/system/patroni.service.d/10-tofu.conf",
+			Stdin: []byte(dropin),
+		},
+		{Label: "patroni daemon-reload", Cmd: "systemctl daemon-reload"},
+	}
+}
+
+// patroniTakeoverCommand hands the packaged cluster's data_dir to Patroni:
+// Patroni — not systemd — must own the postgres process and it must initdb into
+// an EMPTY data_dir, but the fresh install already started a populated `main`
+// cluster there. So stop and disable the Debian postgresql@<major>-<cluster>
+// unit and empty the data_dir. Guarded on the absence of patroni.dynamic.json
+// (Patroni writes it once it has bootstrapped) so this runs only before Patroni
+// has taken over — a re-apply against a live Patroni node is a no-op and never
+// wipes a running cluster.
+func patroniTakeoverCommand(version, cluster, dataDir string) Command {
+	unit := ServiceUnit(version, cluster)
+	body := fmt.Sprintf("pg_ctlcluster %s %s stop || true; systemctl disable %s 2>/dev/null || true; find %s -mindepth 1 -delete",
+		version, cluster, unit, shQuote(dataDir))
+	return Command{
+		Label: "patroni takeover",
+		Cmd:   fmt.Sprintf("if [ ! -f %s/patroni.dynamic.json ]; then %s; fi", shQuote(dataDir), body),
+	}
+}
+
+// PatroniNodeParams configures a Patroni node's bring-up.
+type PatroniNodeParams struct {
+	Version     string
+	Cluster     string // Debian cluster name (packaged unit + data_dir)
+	ClusterName string // Patroni scope (config filename)
+	DataDir     string
+	YAML        string
+}
+
+// PatroniCommands renders the full Patroni node bring-up: install Patroni, write
+// patroni.yml, install the systemd drop-in pointing the unit at it, hand the
+// data_dir to Patroni (stop/disable the packaged unit + empty the dir, guarded),
+// then enable+start patroni. Patroni owns the postgres process once running — do
+// NOT also manage the same cluster via postgres_service (see DESIGN.md).
+func PatroniCommands(p PatroniNodeParams) []Command {
+	confPath := PatroniConfPath(p.ClusterName)
+	cmds := []Command{
+		PatroniInstallCommand(),
+		{Label: "patroni conf", Cmd: fmt.Sprintf("mkdir -p /etc/patroni && cat > %s", shQuote(confPath)), Stdin: []byte(p.YAML)},
+	}
+	cmds = append(cmds, patroniDropInCommands(confPath)...)
+	cmds = append(cmds,
+		patroniTakeoverCommand(p.Version, p.Cluster, p.DataDir),
+		Command{Label: "patroni service", Cmd: "systemctl enable --now patroni"},
+	)
+	return cmds
 }

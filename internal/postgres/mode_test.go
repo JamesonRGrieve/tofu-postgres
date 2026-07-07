@@ -35,10 +35,11 @@ func TestNodeCommandsDispatch(t *testing.T) {
 	}{
 		{"streaming primary", ModeStreaming, RolePrimary, "streaming primary", "wal_level = replica"},
 		{"streaming replica", ModeStreaming, RoleReplica, "streaming standby", "pg_basebackup"},
-		{"repmgr primary", ModeRepmgr, RolePrimary, "repmgr primary", "primary register"},
-		{"repmgr replica", ModeRepmgr, RoleReplica, "repmgr standby", "standby clone"},
-		{"repmgr witness", ModeRepmgr, RoleWitness, "repmgr witness", "witness register"},
-		{"patroni primary", ModePatroni, RolePrimary, "patroni", "scope: pgcluster"},
+		// Every repmgr/patroni node list starts with its package-install command.
+		{"repmgr primary", ModeRepmgr, RolePrimary, "repmgr install", "primary register"},
+		{"repmgr replica", ModeRepmgr, RoleReplica, "repmgr install", "standby clone"},
+		{"repmgr witness", ModeRepmgr, RoleWitness, "repmgr install", "witness register"},
+		{"patroni primary", ModePatroni, RolePrimary, "patroni install", "scope: pgcluster"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

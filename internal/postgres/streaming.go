@@ -73,7 +73,7 @@ func StreamingPrimaryCommands(p StreamingPrimaryParams) []Command {
 		cmds = append(cmds, Command{
 			Label: "streaming primary replication role",
 			Cmd:   fmt.Sprintf("su postgres -c %s", shQuote(primaryPsql(p.Version, p.Cluster, "-f -"))),
-			Stdin: []byte(replicationRoleSQL(p.ReplicationUser, p.ReplicationPassword)),
+			Stdin: []byte(replicationRoleSQL(p.ReplicationUser, p.ReplicationPassword, false)),
 		})
 	}
 	for _, slot := range p.Slots {
@@ -96,22 +96,28 @@ func primaryPsql(version, cluster, args string) string {
 	return fmt.Sprintf("psql -p $(pg_lsclusters -h | awk '$1==\"%s\"&&$2==\"%s\"{print $3}') %s", version, cluster, args)
 }
 
-// replicationRoleSQL renders idempotent create-or-sync DDL for the streaming
-// replication role: CREATE it with LOGIN REPLICATION when absent, otherwise
-// ALTER it so a rotated password propagates. The identifier and password are
-// escaped for SQL (double-quoted ident, single-quoted literal); the SQL is fed
+// replicationRoleSQL renders idempotent create-or-sync DDL for a replication
+// role: CREATE it when absent, otherwise ALTER it so a rotated password
+// propagates. superuser toggles LOGIN REPLICATION (streaming's walreceiver
+// role) vs LOGIN SUPERUSER REPLICATION (repmgr's role, which must own its
+// metadata database and run failover DDL). The identifier and password are
+// SQL-escaped (double-quoted ident, single-quoted literal) and the SQL is fed
 // on stdin so the password never appears in a process argument.
-func replicationRoleSQL(user, password string) string {
-	ident := `"` + strings.ReplaceAll(user, `"`, `""`) + `"`
+func replicationRoleSQL(user, password string, superuser bool) string {
+	ident := QuoteIdent(user)
+	opts := "LOGIN REPLICATION"
+	if superuser {
+		opts = "LOGIN SUPERUSER REPLICATION"
+	}
 	var pw string
 	if password != "" {
-		pw = " PASSWORD '" + strings.ReplaceAll(password, "'", "''") + "'"
+		pw = " PASSWORD " + QuoteLiteral(password)
 	}
 	return fmt.Sprintf(
 		"DO $do$ BEGIN "+
-			"IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = %s) THEN CREATE ROLE %s WITH LOGIN REPLICATION%s; "+
-			"ELSE ALTER ROLE %s WITH LOGIN REPLICATION%s; END IF; END $do$;",
-		"'"+strings.ReplaceAll(user, "'", "''")+"'", ident, pw, ident, pw)
+			"IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = %s) THEN CREATE ROLE %s WITH %s%s; "+
+			"ELSE ALTER ROLE %s WITH %s%s; END IF; END $do$;",
+		QuoteLiteral(user), ident, opts, pw, ident, opts, pw)
 }
 
 // StreamingStandbyParams configures the standby side of plain streaming
@@ -167,14 +173,9 @@ func StreamingStandbyCommands(p StreamingStandbyParams) []Command {
 		if port == 0 {
 			port = DefaultPGPort
 		}
-		pgpass := fmt.Sprintf("%s:%d:replication:%s:%s\n%s:%d:*:%s:%s\n",
-			p.PrimaryHost, port, p.ReplicationUser, p.ReplicationPassword,
-			p.PrimaryHost, port, p.ReplicationUser, p.ReplicationPassword)
-		cmds = append(cmds, Command{
-			Label: "streaming standby pgpass",
-			Cmd:   "install -d -o postgres -g postgres -m 700 ~postgres && cat > ~postgres/.pgpass && chown postgres:postgres ~postgres/.pgpass && chmod 600 ~postgres/.pgpass",
-			Stdin: []byte(pgpass),
-		})
+		cmds = append(cmds, pgpassCommand("streaming standby pgpass",
+			fmt.Sprintf("%s:%d:replication:%s:%s", p.PrimaryHost, port, p.ReplicationUser, p.ReplicationPassword),
+			fmt.Sprintf("%s:%d:*:%s:%s", p.PrimaryHost, port, p.ReplicationUser, p.ReplicationPassword)))
 	}
 	cmds = append(cmds,
 		Command{Label: "streaming standby clone", Cmd: clone},

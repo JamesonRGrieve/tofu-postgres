@@ -72,13 +72,11 @@ func (r *packageResource) Configure(_ context.Context, req resource.ConfigureReq
 	r.client = configureClient(req, resp)
 }
 
-// aptGet is the apt-get invocation prefix shared by every mutating apt call:
-// non-interactive frontend + a bounded wait for the dpkg lock. The
-// DPkg::Lock::Timeout makes apt-get block (up to 300s) for the dpkg lock rather
-// than exit 100 instantly. Fresh guests run a boot-time apt-daily that holds
-// /var/lib/dpkg/lock-frontend; without this, a converge racing that timer fails.
-// Prod guests carry the same timer, so this is not lab-only.
-const aptGet = "DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300"
+// aptGet is the shared apt-get invocation prefix (non-interactive frontend + a
+// bounded wait for the dpkg lock). It is defined once in the transport/pure
+// layer (postgres.AptGet) so the package resource and the HA package installs
+// use identical semantics; see that constant for the rationale.
+const aptGet = postgres.AptGet
 
 // packageCommands is the pure command builder (unit-tested with an injected
 // RunFunc). It installs the package, then holds or unholds it.
