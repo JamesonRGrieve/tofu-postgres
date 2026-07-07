@@ -179,10 +179,17 @@ func (r *serviceResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 	unit := postgres.ServiceUnit(m.Version.ValueString(), m.Cluster.ValueString())
-	script := fmt.Sprintf("systemctl is-enabled %s 2>/dev/null; echo '%s'; systemctl is-active %s 2>/dev/null", unit, readSentinel, unit)
+	// `|| true` keeps a stopped/failed unit (is-active exits non-zero) from erroring
+	// the whole read. A genuine SSH failure (the node is down) still errors — and is
+	// then degraded to "stopped" below rather than blocking convergence, so an apply
+	// can reconcile a dead node instead of a refresh dead-ending on it.
+	script := fmt.Sprintf("systemctl is-enabled %s 2>/dev/null || true; echo '%s'; systemctl is-active %s 2>/dev/null || true", unit, readSentinel, unit)
 	out, err := r.client.Run(script, nil)
 	if err != nil {
-		resp.Diagnostics.AddError("postgres_service read failed", err.Error())
+		m.Enabled = types.BoolValue(false)
+		m.State = types.StringValue("stopped")
+		m.ID = types.StringValue(m.Version.ValueString() + "/" + m.Cluster.ValueString())
+		resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 		return
 	}
 	enabledPart, activePart := splitSentinel(string(out))
